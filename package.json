@@ -1,21 +1,20 @@
 {
-  "name": "ai-agent",
+  "name": "ts-ai-agent-controller",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "Controls the Qwen AI agent via Slack using TypeScript.",
+  "main": "dist/app.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc",
+    "start": "node dist/app.js",
+    "dev": "ts-node src/app.ts"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "dependencies": {
-    "@slack/bolt": "^4.4.0",
-    "dotenv": "^17.2.1"
+    "@slack/bolt": "^3.13.0",
+    "dotenv": "^16.3.1"
   },
   "devDependencies": {
-    "@types/node": "^24.3.0",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.9.2"
+    "@types/node": "^20.8.9",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.2.2"
   }
 }
