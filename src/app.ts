@@ -1,7 +1,7 @@
 import * as dotenv from 'dotenv';
 dotenv.config(); // Load environment variables from .env file
 
-import { App } from '@slack/bolt';
+import { App, SayFn } from '@slack/bolt';
 import { runAgentTask } from './agent.js'; // Import the core agent logic
 
 // --- Agent State ---
@@ -60,16 +60,27 @@ app.command('/agent-do', async ({ command, ack, say, respond }) => {
     return;
   }
 
-  // Acknowledge the task and inform the user that processing has started
-  await say(
-    `🚀 Task received: "*${prompt}*". The AI agent is starting its work. This may take a few minutes...`,
+  // 1. Send the initial acknowledgment and capture its result
+  const initialMessage = await say(
+    `🚀 Task received: "*${prompt}*". The AI agent is starting its work. I'll post updates on my progress in this thread.`,
   );
-  console.log(`Starting agent task for prompt: "${prompt}"`);
 
-  // Run the AI agent task asynchronously
+  // 2. Extract the message timestamp. If it exists, we can create a thread.
+  const threadTs = initialMessage.ts;
+  if (!threadTs) {
+    console.error('Failed to get timestamp from initial message.');
+    await say('Could not start a thread for progress updates.');
+    return;
+  }
+
+  console.log(`Starting agent task for prompt: "${prompt}" in thread ${threadTs}`);
+
+  // 3. Run the agent task asynchronously, now passing `say` and `threadTs`
   try {
-    const resultMessage = await runAgentTask(prompt);
-    // Send the success message back to Slack
+    // We pass the `say` function and the thread timestamp down to the agent
+    const resultMessage = await runAgentTask(prompt, say, threadTs);
+    
+    // The final message is posted as a main message, not in the thread
     await say(`✅ ${resultMessage}`);
     console.log(`Agent task completed successfully for prompt: "${prompt}"`);
   } catch (error: any) {
