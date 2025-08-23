@@ -34,12 +34,13 @@ class QwenAIProvider implements AIProvider {
   }
 
   /**
-   * Executes the plan and streams the output to Slack in real-time.
+   * Executes the plan and streams the output to Slack in real-time,
+   * with watchdog + timeout protection.
    */
   async executePlan(plan: string, cwd: string, say: SayFn, threadTs: string): Promise<void> {
     const executionPrompt = `Please execute the following plan:\n\n${plan}`;
 
-    // Use the streaming command runner for live updates.
+    // Start Qwen in non-interactive mode
     const subprocess = runCommandStream('qwen', ['-y'], {
       cwd,
       input: executionPrompt
@@ -50,29 +51,54 @@ class QwenAIProvider implements AIProvider {
     const decoder = new TextDecoder();
     let buffer = '';
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      const chunk = decoder.decode(value, { stream: true });
-      buffer += chunk;
-
-      const lines = buffer.split('\n');
-      if (lines.length > 1) {
-        const linesToSend = lines.slice(0, -1).join('\n');
-        if (linesToSend.trim()) {
-          say({ text: `➡️ ${linesToSend}`, thread_ts: threadTs });
-        }
-        buffer = lines[lines.length - 1];
+    // --- Watchdog setup ---
+    let lastOutput = Date.now();
+    const watchdogInterval = setInterval(() => {
+      if (Date.now() - lastOutput > 60000) { // 60s silence
+        console.warn('⚠️ Qwen has been silent for >60s');
+        say({ text: '⚠️ Qwen has been silent for over a minute, might be stuck.', thread_ts: threadTs });
       }
-    }
+    }, 60000);
 
-    if (buffer.trim()) {
-      say({ text: `➡️ ${buffer}`, thread_ts: threadTs });
-    }
+    // --- Hard timeout (e.g. 15 minutes) ---
+    const timeoutMs = 15 * 60 * 1000;
+    const timeout = setTimeout(() => {
+      console.error('⏰ Qwen execution timed out, killing process.');
+      subprocess.kill('SIGKILL');
+      say({ text: '⏰ Qwen execution timed out and was killed.', thread_ts: threadTs });
+    }, timeoutMs);
 
-    // Await the process to ensure it completes successfully.
-    await subprocess;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+        lastOutput = Date.now(); // reset watchdog
+
+        // Also log to console for SSH/pm2 logs
+        console.log('[Qwen]', chunk);
+
+        const lines = buffer.split('\n');
+        if (lines.length > 1) {
+          const linesToSend = lines.slice(0, -1).join('\n');
+          if (linesToSend.trim()) {
+            say({ text: `➡️ ${linesToSend}`, thread_ts: threadTs });
+          }
+          buffer = lines[lines.length - 1];
+        }
+      }
+
+      if (buffer.trim()) {
+        say({ text: `➡️ ${buffer}`, thread_ts: threadTs });
+      }
+
+      await subprocess; // wait for exit
+    } finally {
+      clearInterval(watchdogInterval);
+      clearTimeout(timeout);
+    }
   }
 
   async generateBranchName(prompt: string, cwd: string): Promise<string> {
