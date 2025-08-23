@@ -1,10 +1,11 @@
 // src/command.ts
 import { execa } from 'execa';
 
-// The options object now accepts an optional 'input' string
+// The options object now accepts an optional 'onStdout' callback
 export interface CommandOptions {
   cwd?: string;
   input?: string;
+  onStdout?: (chunk: string) => void;
 }
 
 export async function runCommand(
@@ -18,23 +19,44 @@ export async function runCommand(
     console.log(`[stdin]> Piping input to command...`);
   }
 
-  try {
-    // We pass the optional 'input' property directly to execa.
-    // execa will pipe this string to the process's stdin.
-    const result = await execa(command, args, {
-      cwd,
-      input: options?.input, // <-- This is the key change
-    });
+  // We create the subprocess but don't await it immediately
+  const subprocess = execa(command, args, {
+    cwd,
+    input: options?.input,
+  });
 
-    if (result.stderr) {
-      console.error('STDERR:', result.stderr);
+  let stdout = '';
+  let stderr = '';
+
+  // Listen to the stdout stream in real-time
+  subprocess.stdout?.on('data', (chunk: Buffer) => {
+    const text = chunk.toString();
+    stdout += text;
+    // If a callback is provided, execute it with the new chunk of data
+    if (options?.onStdout) {
+      options.onStdout(text);
     }
-    console.log(result.stdout);
+  });
+
+  // We can also capture stderr
+  subprocess.stderr?.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    // Now we await the process to complete
+    await subprocess;
+
+    // Log the final full output for debugging purposes
+    console.log('Final STDOUT:', stdout);
+    if (stderr) {
+      console.error('Final STDERR:', stderr);
+    }
     
-    return { stdout: result.stdout, stderr: result.stderr };
+    return { stdout, stderr };
   } catch (error: any) {
     console.error(`Error executing command: "${command} ${args.join(' ')}"`, error);
-    const detailedErrorMessage = `Command failed: ${command} ${args.join(' ')}\nSTDOUT: ${error.stdout}\nSTDERR: ${error.stderr}`;
+    const detailedErrorMessage = `Command failed: ${command} ${args.join(' ')}\nSTDOUT: ${stdout}\nSTDERR: ${stderr}`;
     throw new Error(detailedErrorMessage);
   }
 }
