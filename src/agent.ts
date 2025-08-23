@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs/promises';
 import { SayFn } from '@slack/bolt';
-import { ai } from './ai-adapter.js';
+import { createAIProvider, AIProviderConfig } from './ai-adapter.js';
 import { git } from './git.js';
 
 export async function runAgentTask(
@@ -14,6 +14,15 @@ export async function runAgentTask(
   if (!repoUrl) {
     throw new Error('TARGET_REPO_URL environment variable is not set.');
   }
+
+  // Create AI provider based on configuration
+  const aiProviderConfig: AIProviderConfig = {
+    provider: (process.env.AI_PROVIDER as 'qwen' | 'openai') || 'qwen',
+    model: process.env.AI_MODEL,
+    apiKey: process.env.OPENAI_API_KEY,
+  };
+  
+  const ai = createAIProvider(aiProviderConfig);
 
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-agent-'));
 

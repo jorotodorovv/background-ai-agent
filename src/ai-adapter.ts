@@ -9,28 +9,33 @@ export interface GitMetadata {
   prBody: string;
 }
 
-export interface AIProvider {
-  generateBranchName(prompt: string, cwd: string): Promise<string>;
-  generateCommitInfo(prompt: string, diff: string, cwd: string): Promise<GitMetadata>;
-  generatePlan(prompt: string, cwd: string): Promise<string>;
-  executePlan(plan: string, cwd: string, say: SayFn, threadTs: string): Promise<void>;
+export interface AIProviderConfig {
+  provider: 'qwen' | 'openai';
+  model?: string;
+  apiKey?: string;
 }
 
-class QwenAIProvider implements AIProvider {
-  /**
-   * Generates the plan as a single, complete block of text.
-   */
+// Base class with common functionality
+export abstract class AIProvider {
+  // Abstract methods that must be implemented by providers
+  protected abstract getCommand(): string;
+  protected abstract getCommandArgs(action: 'plan' | 'execute' | 'branch' | 'commit', options?: { model?: string, apiKey?: string }): string[];
+  
+  // Common implementation for generating plans
   async generatePlan(prompt: string, cwd: string): Promise<string> {
     const planningPrompt = `Based on the user request, create a detailed implementation plan. Do not execute any commands or modify any files; only output the plan. The user's request is:\n\n${prompt}`;
-
-    // Use the buffered command runner to get the full plan at once.
-    const { stdout } = await runCommand('qwen', [], {
+    
+    const command = this.getCommand();
+    const args = this.getCommandArgs('plan');
+    
+    const { stdout } = await runCommand(command, args, {
       cwd,
       input: planningPrompt
     });
     return stdout;
   }
-
+  
+  // Common implementation for executing plans with streaming
   async executePlan(plan: string, cwd: string, say: SayFn, threadTs: string): Promise<void> {
     // --- NEW PROMPT ENGINEERING ---
     // Instruct the AI to use a special prefix for all explanatory text.
@@ -44,93 +49,38 @@ The plan is:
 ${plan}
 ---
 `;
-
-    const subprocess = runCommandStream('qwen', ['-y'], {
+    
+    const command = this.getCommand();
+    const args = this.getCommandArgs('execute');
+    
+    const subprocess = runCommandStream(command, args, {
       cwd,
       input: executionPrompt,
     });
-
-    const webStream = ReadableStream.from(subprocess.stdout!);
-    const reader = webStream.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    // --- Watchdog and Timeout (unchanged) ---
-    let lastOutput = Date.now();
-    const watchdogInterval = setInterval(() => {
-      if (Date.now() - lastOutput > 60000) {
-        console.warn('⚠️ Qwen has been silent for >60s');
-        say({ text: '⚠️ Qwen has been silent for over a minute, might be stuck.', thread_ts: threadTs });
-      }
-    }, 60000);
-
-    const timeoutMs = 15 * 60 * 1000;
-    const timeout = setTimeout(() => {
-      console.error('⏰ Qwen execution timed out, killing process.');
-      subprocess.kill('SIGKILL');
-      say({ text: '⏰ Qwen execution timed out and was killed.', thread_ts: threadTs });
-    }, timeoutMs);
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        buffer += chunk;
-        lastOutput = Date.now();
-
-        const lines = buffer.split('\n');
-        if (lines.length > 1) {
-          const linesToProcess = lines.slice(0, -1);
-          buffer = lines[lines.length - 1];
-
-          for (const line of linesToProcess) {
-            // --- NEW FILTERING LOGIC ---
-            if (line.startsWith('[REASONING]')) {
-              // This is an explanation. Clean it up and send it to Slack.
-              const reasoningText = line.substring('[REASONING]'.length).trim();
-              if (reasoningText) {
-                say({ text: `➡️ ${reasoningText}`, thread_ts: threadTs });
-              }
-            } else {
-              // This is internal command output. Log it for debugging but don't send to Slack.
-              console.log('[Qwen Execution]:', line);
-            }
-          }
-        }
-      }
-
-      // Process any final text left in the buffer
-      if (buffer.trim().startsWith('[REASONING]')) {
-        const reasoningText = buffer.substring('[REASONING]'.length).trim();
-        if (reasoningText) {
-          say({ text: `➡️ ${reasoningText}`, thread_ts: threadTs });
-        }
-      } else {
-        console.log('[Qwen Execution]:', buffer);
-      }
-
-      await subprocess; // Wait for the main Qwen process to exit
-    } finally {
-      clearInterval(watchdogInterval);
-      clearTimeout(timeout);
-    }
+    
+    // Common stream processing logic
+    await this.processStream(subprocess, say, threadTs, command);
   }
-
+  
+  // Common implementation for generating branch names
   async generateBranchName(prompt: string, cwd: string): Promise<string> {
     const branchPrompt = `Based on the following user request, generate a short, descriptive, git-compliant branch name (kebab-case, max 40 characters). User request: "${prompt}"\n\nOutput only the branch name and nothing else.`;
-    const { stdout } = await runCommand('qwen', [], { cwd, input: branchPrompt });
-
+    
+    const command = this.getCommand();
+    const args = this.getCommandArgs('branch');
+    
+    const { stdout } = await runCommand(command, args, { cwd, input: branchPrompt });
+    
     const lines = stdout.trim().split('\n').map(l => l.trim()).filter(Boolean);
     const lastLine = lines[lines.length - 1] || 'ai-agent-task';
-
+    
     return lastLine
       .toLowerCase()
       .replace(/\s+/g, '-')       // spaces -> dashes
       .replace(/[^a-z0-9-]/g, ''); // remove invalid chars
   }
-
+  
+  // Common implementation for generating commit info
   async generateCommitInfo(prompt: string, diff: string, cwd: string): Promise<GitMetadata> {
     const metaPrompt = `
 You are an expert software developer. Based on the original user request and the following code changes (git diff), generate the necessary metadata for a pull request.
@@ -150,9 +100,12 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
 - "prTitle": A clear, concise title for the pull request.
 - "prBody": A detailed description for the pull request body. Summarize the changes, explain the "why", and reference the original prompt. Use Markdown.
 `;
-
-    const { stdout } = await runCommand('qwen', [], { cwd, input: metaPrompt });
-
+    
+    const command = this.getCommand();
+    const args = this.getCommandArgs('commit');
+    
+    const { stdout } = await runCommand(command, args, { cwd, input: metaPrompt });
+    
     try {
       // Find the JSON block in the AI's output
       const jsonMatch = stdout.match(/\{[\s\S]*\}/);
@@ -170,6 +123,147 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
       };
     }
   }
+  
+  // Common stream processing logic
+  protected async processStream(subprocess: any, say: SayFn, threadTs: string, providerName: string): Promise<void> {
+    const webStream = ReadableStream.from(subprocess.stdout!);
+    const reader = webStream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    
+    // --- Watchdog and Timeout (unchanged) ---
+    let lastOutput = Date.now();
+    const watchdogInterval = setInterval(() => {
+      if (Date.now() - lastOutput > 60000) {
+        console.warn(`⚠️ ${providerName} has been silent for >60s`);
+        say({ text: `⚠️ ${providerName} has been silent for over a minute, might be stuck.`, thread_ts: threadTs });
+      }
+    }, 60000);
+    
+    const timeoutMs = 60 * 60 * 1000;
+    const timeout = setTimeout(() => {
+      console.error(`⏰ ${providerName} execution timed out, killing process.`);
+      subprocess.kill('SIGKILL');
+      say({ text: `⏰ ${providerName} execution timed out and was killed.`, thread_ts: threadTs });
+    }, timeoutMs);
+    
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value as BufferSource, { stream: true });
+        buffer += chunk;
+        lastOutput = Date.now();
+        
+        const lines = buffer.split('\n');
+        if (lines.length > 1) {
+          const linesToProcess = lines.slice(0, -1);
+          buffer = lines[lines.length - 1];
+          
+          for (const line of linesToProcess) {
+            // --- NEW FILTERING LOGIC ---
+            if (line.startsWith('[REASONING]')) {
+              // This is an explanation. Clean it up and send it to Slack.
+              const reasoningText = line.substring('[REASONING]'.length).trim();
+              if (reasoningText) {
+                say({ text: `➡️ ${reasoningText}`, thread_ts: threadTs });
+              }
+            } else {
+              // This is internal command output. Log it for debugging but don't send to Slack.
+              console.log(`[${providerName} Execution]:`, line);
+            }
+          }
+        }
+      }
+      
+      // Process any final text left in the buffer
+      if (buffer.trim().startsWith('[REASONING]')) {
+        const reasoningText = buffer.substring('[REASONING]'.length).trim();
+        if (reasoningText) {
+          say({ text: `➡️ ${reasoningText}`, thread_ts: threadTs });
+        }
+      } else {
+        console.log(`[${providerName} Execution]:`, buffer);
+      }
+      
+      await subprocess; // Wait for the main process to exit
+    } finally {
+      clearInterval(watchdogInterval);
+      clearTimeout(timeout);
+    }
+  }
 }
 
+// Qwen provider implementation
+class QwenAIProvider extends AIProvider {
+  protected getCommand(): string {
+    return 'qwen';
+  }
+  
+  protected getCommandArgs(action: 'plan' | 'execute' | 'branch' | 'commit'): string[] {
+    switch (action) {
+      case 'plan':
+        return [];
+      case 'execute':
+        return ['-y'];
+      case 'branch':
+        return [];
+      case 'commit':
+        return [];
+      default:
+        return [];
+    }
+  }
+}
+
+// OpenAI provider implementation
+class OpenAIProvider extends AIProvider {
+  private model: string;
+  private apiKey: string;
+  
+  constructor(config: AIProviderConfig) {
+    super();
+    this.model = config.model || 'gpt-4';
+    this.apiKey = config.apiKey || process.env.OPENAI_API_KEY || '';
+    
+    if (!this.apiKey) {
+      throw new Error('OPENAI_API_KEY is required for OpenAI provider');
+    }
+  }
+  
+  protected getCommand(): string {
+    return 'openai';
+  }
+  
+  protected getCommandArgs(action: 'plan' | 'execute' | 'branch' | 'commit'): string[] {
+    const baseArgs = ['--model', this.model, '--api-key', this.apiKey];
+    
+    switch (action) {
+      case 'plan':
+        return baseArgs;
+      case 'execute':
+        return [...baseArgs, '--stream'];
+      case 'branch':
+        return baseArgs;
+      case 'commit':
+        return baseArgs;
+      default:
+        return baseArgs;
+    }
+  }
+}
+
+export function createAIProvider(config: AIProviderConfig): AIProvider {
+  switch (config.provider) {
+    case 'qwen':
+      return new QwenAIProvider();
+    case 'openai':
+      return new OpenAIProvider(config);
+    default:
+      throw new Error(`Unsupported AI provider: ${config.provider}`);
+  }
+}
+
+// For backward compatibility, export a default Qwen provider
 export const ai = new QwenAIProvider();
