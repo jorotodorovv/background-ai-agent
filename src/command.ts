@@ -1,11 +1,30 @@
 // src/command.ts
 import { execa } from 'execa';
 
-// The options object now accepts an optional 'onStdout' callback
+// The options object now accepts an optional 'input' string
 export interface CommandOptions {
   cwd?: string;
   input?: string;
-  onStdout?: (chunk: string) => void;
+}
+
+export function runCommandStream(
+  command: string,
+  args: string[],
+  options?: CommandOptions,
+) {
+  const cwd = options?.cwd || process.cwd();
+  console.log(`[${cwd}]> ${command} ${args.map(arg => `'${arg}'`).join(' ')}`);
+  if (options?.input) {
+    console.log(`[stdin]> Piping input to command...`);
+  }
+
+  // Create and return the subprocess immediately
+  const subprocess = execa(command, args, {
+    cwd,
+    input: options?.input,
+  });
+
+  return subprocess;
 }
 
 export async function runCommand(
@@ -19,44 +38,23 @@ export async function runCommand(
     console.log(`[stdin]> Piping input to command...`);
   }
 
-  // We create the subprocess but don't await it immediately
-  const subprocess = execa(command, args, {
-    cwd,
-    input: options?.input,
-  });
-
-  let stdout = '';
-  let stderr = '';
-
-  // Listen to the stdout stream in real-time
-  subprocess.stdout?.on('data', (chunk: Buffer) => {
-    const text = chunk.toString();
-    stdout += text;
-    // If a callback is provided, execute it with the new chunk of data
-    if (options?.onStdout) {
-      options.onStdout(text);
-    }
-  });
-
-  // We can also capture stderr
-  subprocess.stderr?.on('data', (chunk: Buffer) => {
-    stderr += chunk.toString();
-  });
-
   try {
-    // Now we await the process to complete
-    await subprocess;
+    // We pass the optional 'input' property directly to execa.
+    // execa will pipe this string to the process's stdin.
+    const result = await execa(command, args, {
+      cwd,
+      input: options?.input, // <-- This is the key change
+    });
 
-    // Log the final full output for debugging purposes
-    console.log('Final STDOUT:', stdout);
-    if (stderr) {
-      console.error('Final STDERR:', stderr);
+    if (result.stderr) {
+      console.error('STDERR:', result.stderr);
     }
+    console.log(result.stdout);
     
-    return { stdout, stderr };
+    return { stdout: result.stdout, stderr: result.stderr };
   } catch (error: any) {
     console.error(`Error executing command: "${command} ${args.join(' ')}"`, error);
-    const detailedErrorMessage = `Command failed: ${command} ${args.join(' ')}\nSTDOUT: ${stdout}\nSTDERR: ${stderr}`;
+    const detailedErrorMessage = `Command failed: ${command} ${args.join(' ')}\nSTDOUT: ${error.stdout}\nSTDERR: ${error.stderr}`;
     throw new Error(detailedErrorMessage);
   }
 }
