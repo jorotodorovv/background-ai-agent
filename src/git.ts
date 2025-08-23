@@ -34,8 +34,14 @@ export class Git {
     base: string,
     cwd: string,
   ): Promise<string> {
-    const args = ['pr', 'create', '--base', base, '--title-file', '-', '--body-file', '-'];
-    const { stdout } = await runCommand('gh', args, { cwd, input: `${title}\n\n${body}` });
+    const args = [
+      'pr',
+      'create',
+      '--base', base,
+      '--title', title,
+      '-F', '-',   // read body from stdin
+    ];
+    const { stdout } = await runCommand('gh', args, { cwd, input: body });
     return stdout.trim();
   }
 }
