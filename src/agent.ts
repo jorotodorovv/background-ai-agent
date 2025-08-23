@@ -24,20 +24,23 @@ export async function runAgentTask(
 
     const uniqueId = randomBytes(4).toString('hex');
     const branchName = `ai-agent/${prompt.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').slice(0, 20)}-${uniqueId}`;
-    
+
     await git.branch(branchName, tempDir);
 
     await say({ text: '🤔 Generating an implementation plan...', thread_ts: threadTs });
-    const plan = await ai.generatePlan(prompt, tempDir, say, threadTs);
-    
-    await say({ text: '🧠 Plan generated. I will now proceed with the implementation.', thread_ts: threadTs });
+    const plan = await ai.generatePlan(prompt, tempDir);
+
+    await say({
+      text: `🧠 Here's the plan:\n\`\`\`\n${plan}\n\`\`\`\nI will now proceed with the implementation.`,
+      thread_ts: threadTs,
+    });
 
     await say({ text: '🏗️ Implementing the plan...', thread_ts: threadTs });
     await ai.executePlan(plan, tempDir, say, threadTs);
     await say({ text: '📝 AI has finished. Committing changes and pushing to a new branch...', thread_ts: threadTs });
 
     await git.add(tempDir);
-    
+
     const changedFiles = await git.status(tempDir);
     if (!changedFiles) {
       return `Task complete for prompt: "*${prompt}*". The AI found no changes to make.`;
@@ -48,7 +51,7 @@ export async function runAgentTask(
     await say({ text: '📝 Committing changes...', thread_ts: threadTs });
     const commitMessage = `feat: AI-driven changes for ${prompt.slice(0, 50)}...`;
     await git.commit(commitMessage, tempDir);
-    
+
     await say({ text: '🔗 Pushing branch to remote...', thread_ts: threadTs });
     await git.push(branchName, tempDir);
 

@@ -1,77 +1,69 @@
 // src/ai-adapter.ts
 import { SayFn } from '@slack/bolt';
-import { runCommandStream } from './command.js';
+// Import both command runners
+import { runCommand, runCommandStream } from './command.js';
 import { ReadableStream } from 'node:stream/web';
 
 export interface AIProvider {
-  generatePlan(prompt: string, cwd: string, say: SayFn, threadTs: string): Promise<string>;
+  generatePlan(prompt: string, cwd: string): Promise<string>; // No longer needs say/threadTs
   executePlan(plan: string, cwd: string, say: SayFn, threadTs: string): Promise<void>;
 }
 
 class QwenAIProvider implements AIProvider {
-  // This is our generic streaming function that handles the core logic
-  private async streamOutputToSlack(
-    command: string,
-    args: string[],
-    options: { cwd: string; input?: string },
-    say: SayFn,
-    threadTs: string,
-    prefix: string = '', // Optional prefix for messages
-  ): Promise<string> {
-    // 1. Get the child process object from our command runner
-    const subprocess = runCommandStream(command, args, options);
+  /**
+   * Generates the plan as a single, complete block of text.
+   */
+  async generatePlan(prompt: string, cwd: string): Promise<string> {
+    const planningPrompt = `Based on the user request, create a detailed implementation plan. Do not execute any commands or modify any files; only output the plan. The user's request is:\n\n${prompt}`;
     
-    // 2. Convert the Node.js stdout stream to a Web ReadableStream using the native API
-    //    Node.js Readable streams are async iterables, so this works directly.
-    const webStream = ReadableStream.from(subprocess.stdout!);
+    // Use the buffered command runner to get the full plan at once.
+    const { stdout } = await runCommand('qwen', [], { 
+      cwd, 
+      input: planningPrompt 
+    });
+    return stdout;
+  }
 
-    // 3. Process the stream chunk by chunk
+  /**
+   * Executes the plan and streams the output to Slack in real-time.
+   */
+  async executePlan(plan: string, cwd: string, say: SayFn, threadTs: string): Promise<void> {
+    const executionPrompt = `Please execute the following plan:\n\n${plan}`;
+    
+    // Use the streaming command runner for live updates.
+    const subprocess = runCommandStream('qwen', ['-y'], { 
+      cwd, 
+      input: executionPrompt 
+    });
+
+    const webStream = ReadableStream.from(subprocess.stdout!);
     const reader = webStream.getReader();
     const decoder = new TextDecoder();
-    let fullOutput = '';
     let buffer = '';
 
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break; // The stream has ended
+      if (done) break;
       
       const chunk = decoder.decode(value, { stream: true });
       buffer += chunk;
       
-      // Split the buffer by newlines to send complete lines to Slack
       const lines = buffer.split('\n');
       if (lines.length > 1) {
         const linesToSend = lines.slice(0, -1).join('\n');
         if (linesToSend.trim()) {
-          say({ text: `${prefix}${linesToSend}`, thread_ts: threadTs });
+          say({ text: `➡️ ${linesToSend}`, thread_ts: threadTs });
         }
-        buffer = lines[lines.length - 1]; // Keep the remaining partial line
+        buffer = lines[lines.length - 1];
       }
-      fullOutput += chunk;
     }
     
-    // After the loop, send any final text left in the buffer
     if (buffer.trim()) {
-      say({ text: `${prefix}${buffer}`, thread_ts: threadTs });
+      say({ text: `➡️ ${buffer}`, thread_ts: threadTs });
     }
 
-    // Await the subprocess to ensure it has exited and to catch any potential errors
+    // Await the process to ensure it completes successfully.
     await subprocess;
-    return fullOutput;
-  }
-
-  async generatePlan(prompt: string, cwd: string, say: SayFn, threadTs: string): Promise<string> {
-    const planningPrompt = `Based on the user request, create a detailed implementation plan. Do not execute any commands or modify any files; only output the plan. The user's request is:\n\n${prompt}`;
-    
-    await say({ text: '🧠 *Planning...*', thread_ts: threadTs });
-    return this.streamOutputToSlack('qwen', [], { cwd, input: planningPrompt }, say, threadTs, '📝 ');
-  }
-
-  async executePlan(plan: string, cwd: string, say: SayFn, threadTs: string): Promise<void> {
-    const executionPrompt = `Please execute the following plan:\n\n${plan}`;
-    
-    await say({ text: '⚙️ *Executing...*', thread_ts: threadTs });
-    await this.streamOutputToSlack('qwen', ['-y'], { cwd, input: executionPrompt }, say, threadTs, '➡️ ');
   }
 }
 
