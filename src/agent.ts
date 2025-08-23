@@ -22,13 +22,8 @@ async function runCommand(
     if (stderr) console.error('STDERR:', stderr);
     return { stdout, stderr };
   } catch (error: any) {
-    // --- START OF CHANGES ---
-    console.error(`Error executing command: "${command}"`, error);
-    // Create a detailed error message including the command's output
     const detailedErrorMessage = `Command failed: ${command}\nSTDOUT: ${error.stdout}\nSTDERR: ${error.stderr}`;
-    // Throw this new, more descriptive error
     throw new Error(detailedErrorMessage);
-    // --- END OF CHANGES ---
   }
 }
 
@@ -43,10 +38,8 @@ export async function runAgentTask(
   }
 
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-agent-'));
-  console.log(`Created temporary directory: ${tempDir}`);
 
   try {
-    console.log(`Cloning ${repoUrl} into ${tempDir}`);
     await runCommand(`git clone ${repoUrl} .`, { cwd: tempDir });
     await say({ text: '✅ Cloned repository successfully.', thread_ts: threadTs });
 
@@ -58,7 +51,6 @@ export async function runAgentTask(
     // --- NEW TWO-STEP PROCESS ---
 
     // 1. Generate the plan
-    console.log('\n--- Generating implementation plan from Qwen AI ---');
     await say({ text: '🤔 Generating an implementation plan...', thread_ts: threadTs });
     const planningPrompt = `Based on the user request, create a detailed implementation plan. Do not execute any commands or modify any files; only output the plan. The user\'s request is: "${prompt}"`;
     const { stdout: plan } = await runCommand(`qwen -p "${planningPrompt}"`, { cwd: tempDir });
@@ -69,11 +61,9 @@ export async function runAgentTask(
     });
 
     // 2. Execute the plan
-    console.log('\n--- Running Qwen AI Agent (Non-Interactive) ---');
     await say({ text: '⏳ Implementing the plan... this is the longest step and may take a few minutes.', thread_ts: threadTs });
     const executionPrompt = `Please execute the following plan:\n\n${plan}`;
     await runCommand(`qwen -p "${executionPrompt}" -y`, { cwd: tempDir });
-    console.log('--- Qwen AI Agent Finished ---\n');
     await say({ text: '📝 AI has finished. Committing changes and pushing to a new branch...', thread_ts: threadTs });
     // -----------------------------
 
@@ -82,7 +72,6 @@ export async function runAgentTask(
 
     const statusResult = await runCommand('git status --porcelain', { cwd: tempDir });
     if (!statusResult.stdout.trim()) {
-      console.log('The AI made no changes to the code. No commit or PR needed.');
       return `Task complete for prompt: "*${prompt}*". The AI found no changes to make.`;
     }
 
@@ -98,13 +87,10 @@ export async function runAgentTask(
     );
 
     const prUrl = prOutput.trim();
-    console.log(`✅ Successfully created Pull Request: ${prUrl}`);
     return `✅ Task complete! A pull request has been created: ${prUrl}`;
   } catch (error: any) {
-    console.error('An error occurred during agent task:', error.message || error);
     throw new Error(`Agent task failed: ${error.message || 'Unknown error occurred'}.`);
   } finally {
-    console.log(`Cleaning up temporary directory: ${tempDir}`);
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 }
