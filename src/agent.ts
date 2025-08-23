@@ -31,7 +31,7 @@ export async function runAgentTask(
     const plan = await ai.generatePlan(prompt, tempDir);
     
     await say({
-      text: `Here\'s the plan:\n\`\`\`\n${plan}\n\`\`\`\nI will now proceed with the implementation.`,
+      text: `🧠 Here\'s the plan:\n\`\`\`\n${plan}\n\`\`\`\nI will now proceed with the implementation.`,
       thread_ts: threadTs,
     });
 

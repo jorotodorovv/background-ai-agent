@@ -24,7 +24,6 @@ export async function runCommand(
     const result = await execa(command, args, {
       cwd,
       input: options?.input, // <-- This is the key change
-      shell: true,
     });
 
     if (result.stderr) {
