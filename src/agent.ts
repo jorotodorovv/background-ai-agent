@@ -64,7 +64,7 @@ export async function runAgentTask(
     await say({ text: '📝 AI has finished. Committing changes and pushing to a new branch...', thread_ts: threadTs });
     // -----------------------------
 
-    const commitMessage = `feat: AI-driven changes for "${prompt.slice(0, 50)}..."`;
+    const commitMessage = `feat: AI-driven changes for ${prompt.slice(0, 50)}...`;
     await runCommand('git add .', { cwd: tempDir });
 
     const statusResult = await runCommand('git status --porcelain', { cwd: tempDir });
