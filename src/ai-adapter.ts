@@ -8,19 +8,24 @@ export interface AIProvider {
 
 class QwenAIProvider implements AIProvider {
   async generatePlan(prompt: string, cwd: string): Promise<string> {
-    // FIX: Removed the extra \" around the prompt variable.
-    // We pass the raw prompt directly.
-    const planningPrompt = `Based on the user request, create a detailed implementation plan. Do not execute any commands or modify any files; only output the plan. The user's request is: ${prompt}`;
+    const planningPrompt = `Based on the user request, create a detailed implementation plan. Do not execute any commands or modify any files; only output the plan. The user's request is:\n\n${prompt}`;
     
-    const { stdout } = await runCommand('qwen', ['-p', planningPrompt], { cwd });
+    // We now call 'qwen' with no arguments, but pass the prompt via the 'input' option.
+    const { stdout } = await runCommand('qwen', [], { 
+      cwd, 
+      input: planningPrompt 
+    });
     return stdout;
   }
 
   async executePlan(plan: string, cwd: string): Promise<void> {
-    // FIX: Removed the extra \" around the plan variable.
-    const executionPrompt = `Please execute the following plan: ${plan}`;
+    const executionPrompt = `Please execute the following plan:\n\n${plan}`;
     
-    await runCommand('qwen', ['-p', executionPrompt, '-y'], { cwd });
+    // We keep the '-y' argument, but pass the main prompt via 'input'.
+    await runCommand('qwen', ['-y'], { 
+      cwd, 
+      input: executionPrompt 
+    });
   }
 }
 
