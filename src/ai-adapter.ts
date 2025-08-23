@@ -1,6 +1,7 @@
 import { SayFn } from '@slack/bolt';
 import { runCommand, runCommandStream } from './command.js';
 import { ReadableStream } from 'node:stream/web';
+import { MessageBatcher } from './message-batcher.js';
 
 // Define a structure for our expected metadata
 export interface GitMetadata {
@@ -20,21 +21,21 @@ export abstract class AIProvider {
   // Abstract methods that must be implemented by providers
   protected abstract getCommand(): string;
   protected abstract getCommandArgs(action: 'plan' | 'execute' | 'branch' | 'commit', options?: { model?: string, apiKey?: string }): string[];
-  
+
   // Common implementation for generating plans
   async generatePlan(prompt: string, cwd: string): Promise<string> {
     const planningPrompt = `Based on the user request, create a detailed implementation plan. Do not execute any commands or modify any files; only output the plan. The user's request is:\n\n${prompt}`;
-    
+
     const command = this.getCommand();
     const args = this.getCommandArgs('plan');
-    
+
     const { stdout } = await runCommand(command, args, {
       cwd,
       input: planningPrompt
     });
     return stdout;
   }
-  
+
   // Common implementation for executing plans with streaming
   async executePlan(plan: string, cwd: string, say: SayFn, threadTs: string): Promise<void> {
     // --- NEW PROMPT ENGINEERING ---
@@ -49,37 +50,37 @@ The plan is:
 ${plan}
 ---
 `;
-    
+
     const command = this.getCommand();
     const args = this.getCommandArgs('execute');
-    
+
     const subprocess = runCommandStream(command, args, {
       cwd,
       input: executionPrompt,
     });
-    
+
     // Common stream processing logic
     await this.processStream(subprocess, say, threadTs, command);
   }
-  
+
   // Common implementation for generating branch names
   async generateBranchName(prompt: string, cwd: string): Promise<string> {
     const branchPrompt = `Based on the following user request, generate a short, descriptive, git-compliant branch name (kebab-case, max 40 characters). User request: "${prompt}"\n\nOutput only the branch name and nothing else.`;
-    
+
     const command = this.getCommand();
     const args = this.getCommandArgs('branch');
-    
+
     const { stdout } = await runCommand(command, args, { cwd, input: branchPrompt });
-    
+
     const lines = stdout.trim().split('\n').map(l => l.trim()).filter(Boolean);
     const lastLine = lines[lines.length - 1] || 'ai-agent-task';
-    
+
     return lastLine
       .toLowerCase()
       .replace(/\s+/g, '-')       // spaces -> dashes
       .replace(/[^a-z0-9-]/g, ''); // remove invalid chars
   }
-  
+
   // Common implementation for generating commit info
   async generateCommitInfo(prompt: string, diff: string, cwd: string): Promise<GitMetadata> {
     const metaPrompt = `
@@ -100,12 +101,12 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
 - "prTitle": A clear, concise title for the pull request.
 - "prBody": A detailed description for the pull request body. Summarize the changes, explain the "why", and reference the original prompt. Use Markdown.
 `;
-    
+
     const command = this.getCommand();
     const args = this.getCommandArgs('commit');
-    
+
     const { stdout } = await runCommand(command, args, { cwd, input: metaPrompt });
-    
+
     try {
       // Find the JSON block in the AI's output
       const jsonMatch = stdout.match(/\{[\s\S]*\}/);
@@ -123,14 +124,20 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
       };
     }
   }
-  
+
   // Common stream processing logic
   protected async processStream(subprocess: any, say: SayFn, threadTs: string, providerName: string): Promise<void> {
     const webStream = ReadableStream.from(subprocess.stdout!);
     const reader = webStream.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    
+
+    // Create a message batcher for more efficient Slack messaging
+    const batcher = new MessageBatcher(say, threadTs, {
+      batchTimeMs: 2000, // Check for messages every 2 seconds
+      maxBatchSize: 5    // Send up to 5 messages in a batch
+    });
+
     // --- Watchdog and Timeout (unchanged) ---
     let lastOutput = Date.now();
     const watchdogInterval = setInterval(() => {
@@ -139,35 +146,35 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
         say({ text: `⚠️ ${providerName} has been silent for over a minute, might be stuck.`, thread_ts: threadTs });
       }
     }, 60000);
-    
+
     const timeoutMs = 60 * 60 * 1000;
     const timeout = setTimeout(() => {
       console.error(`⏰ ${providerName} execution timed out, killing process.`);
       subprocess.kill('SIGKILL');
       say({ text: `⏰ ${providerName} execution timed out and was killed.`, thread_ts: threadTs });
     }, timeoutMs);
-    
+
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        
+
         const chunk = decoder.decode(value as BufferSource, { stream: true });
         buffer += chunk;
         lastOutput = Date.now();
-        
+
         const lines = buffer.split('\n');
         if (lines.length > 1) {
           const linesToProcess = lines.slice(0, -1);
           buffer = lines[lines.length - 1];
-          
+
           for (const line of linesToProcess) {
             // --- NEW FILTERING LOGIC ---
             if (line.startsWith('[REASONING]')) {
-              // This is an explanation. Clean it up and send it to Slack.
+              // This is an explanation. Clean it up and add it to the batcher.
               const reasoningText = line.substring('[REASONING]'.length).trim();
               if (reasoningText) {
-                say({ text: `➡️ ${reasoningText}`, thread_ts: threadTs });
+                batcher.addMessage(`➡️ ${reasoningText}`);
               }
             } else {
               // This is internal command output. Log it for debugging but don't send to Slack.
@@ -176,19 +183,28 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
           }
         }
       }
-      
+
       // Process any final text left in the buffer
       if (buffer.trim().startsWith('[REASONING]')) {
         const reasoningText = buffer.substring('[REASONING]'.length).trim();
         if (reasoningText) {
-          say({ text: `➡️ ${reasoningText}`, thread_ts: threadTs });
+          batcher.addMessage(`➡️ ${reasoningText}`);
         }
       } else {
         console.log(`[${providerName} Execution]:`, buffer);
       }
-      
-      await subprocess; // Wait for the main process to exit
+
+      try {
+        await subprocess;
+      } catch (error: any) {
+        // If the qwen process fails, we catch the error here.
+        console.error(`The ${providerName} process exited with an error...`, error);
+        batcher.addMessage(`⚠️ The AI process finished with an error...`);
+        // We DO NOT re-throw the error. The function will now exit gracefully.
+      }
     } finally {
+      // Clean up the batcher and send any remaining messages
+      batcher.destroy();
       clearInterval(watchdogInterval);
       clearTimeout(timeout);
     }
@@ -200,7 +216,7 @@ class QwenAIProvider extends AIProvider {
   protected getCommand(): string {
     return 'qwen';
   }
-  
+
   protected getCommandArgs(action: 'plan' | 'execute' | 'branch' | 'commit'): string[] {
     switch (action) {
       case 'plan':
@@ -221,24 +237,24 @@ class QwenAIProvider extends AIProvider {
 class OpenAIProvider extends AIProvider {
   private model: string;
   private apiKey: string;
-  
+
   constructor(config: AIProviderConfig) {
     super();
     this.model = config.model || 'gpt-4';
     this.apiKey = config.apiKey || process.env.OPENAI_API_KEY || '';
-    
+
     if (!this.apiKey) {
       throw new Error('OPENAI_API_KEY is required for OpenAI provider');
     }
   }
-  
+
   protected getCommand(): string {
     return 'openai';
   }
-  
+
   protected getCommandArgs(action: 'plan' | 'execute' | 'branch' | 'commit'): string[] {
     const baseArgs = ['--model', this.model, '--api-key', this.apiKey];
-    
+
     switch (action) {
       case 'plan':
         return baseArgs;
