@@ -78,8 +78,14 @@ class QwenAIProvider implements AIProvider {
   async generateBranchName(prompt: string, cwd: string): Promise<string> {
     const branchPrompt = `Based on the following user request, generate a short, descriptive, git-compliant branch name (kebab-case, max 40 characters). User request: "${prompt}"\n\nOutput only the branch name and nothing else.`;
     const { stdout } = await runCommand('qwen', [], { cwd, input: branchPrompt });
-    // Clean up the output to ensure it's a valid branch name
-    return stdout.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+
+    const lines = stdout.trim().split('\n').map(l => l.trim()).filter(Boolean);
+    const lastLine = lines[lines.length - 1] || 'ai-agent-task';
+
+    return lastLine
+      .toLowerCase()
+      .replace(/\s+/g, '-')       // spaces -> dashes
+      .replace(/[^a-z0-9-]/g, ''); // remove invalid chars
   }
 
   async generateCommitInfo(prompt: string, diff: string, cwd: string): Promise<GitMetadata> {
