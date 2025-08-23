@@ -62,7 +62,7 @@ app.command('/agent-do', async ({ command, ack, say, respond }) => {
 
   // 1. Send the initial acknowledgment and capture its result
   const initialMessage = await say(
-    `🚀 Task received: "*${prompt}*". The AI agent is starting its work. I'll post updates on my progress in this thread.`,
+    `🚀 Task received! The AI agent is starting its work. I'll post updates on my progress in this thread.`,
   );
 
   // 2. Extract the message timestamp. If it exists, we can create a thread.
@@ -87,7 +87,7 @@ app.command('/agent-do', async ({ command, ack, say, respond }) => {
     console.error(`Agent task failed for prompt: "${prompt}"`, error);
     // Send an error message back to Slack
     await say(
-      `🚨 An error occurred while processing your task for "*${prompt}*".\n\n\`\`\`${
+      `🚨 An error occurred while processing your task.\n\n\`\`\`${
         error.message || 'Unknown error occurred.'
       }\`\`\`\nCheck the server logs for more details.`,
     );
