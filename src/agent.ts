@@ -32,7 +32,7 @@ export async function runAgentTask(
     
     await say({ text: '🧠 Plan generated. I will now proceed with the implementation.', thread_ts: threadTs });
 
-    await say({ text: '🏗️ Implementing the plan: \n\`\`\`\n${plan}\n\`\`\`\n', thread_ts: threadTs });
+    await say({ text: '🏗️ Implementing the plan...', thread_ts: threadTs });
     await ai.executePlan(plan, tempDir, say, threadTs);
     await say({ text: '📝 AI has finished. Committing changes and pushing to a new branch...', thread_ts: threadTs });
 
