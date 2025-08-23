@@ -20,8 +20,8 @@ export class Git {
   }
 
   async commit(message: string, cwd: string): Promise<void> {
-    // The commit message is now a safe argument
-    await runCommand('git', ['commit', '-m', message], { cwd });
+    // Use stdin for commit message to avoid shell splitting
+    await runCommand('git', ['commit', '-F', '-'], { cwd, input: message });
   }
 
   async push(branchName: string, cwd: string): Promise<void> {
@@ -34,18 +34,8 @@ export class Git {
     base: string,
     cwd: string,
   ): Promise<string> {
-    // All parts of the PR are now passed as safe arguments
-    const args = [
-      'pr',
-      'create',
-      '--title',
-      title,
-      '--body',
-      body,
-      '--base',
-      base,
-    ];
-    const { stdout } = await runCommand('gh', args, { cwd });
+    const args = ['pr', 'create', '--base', base, '--title-file', '-', '--body-file', '-'];
+    const { stdout } = await runCommand('gh', args, { cwd, input: `${title}\n\n${body}` });
     return stdout.trim();
   }
 }
