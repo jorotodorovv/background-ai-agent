@@ -31,17 +31,23 @@ class QwenAIProvider implements AIProvider {
     return stdout;
   }
 
-  /**
-   * Executes the plan and streams the output to Slack in real-time,
-   * with watchdog + timeout protection.
-   */
   async executePlan(plan: string, cwd: string, say: SayFn, threadTs: string): Promise<void> {
-    const executionPrompt = `Please execute the following plan:\n\n${plan}`;
+    // --- NEW PROMPT ENGINEERING ---
+    // Instruct the AI to use a special prefix for all explanatory text.
+    const executionPrompt = `
+Please execute the following plan. You will run the necessary shell commands yourself.
+When you are providing explanations, comments, or reasoning, you MUST prefix each line with the special marker "[REASONING]".
+Any line that does not start with this marker will be considered internal command output and will be hidden from the user.
 
-    // Start Qwen in non-interactive mode
+The plan is:
+---
+${plan}
+---
+`;
+
     const subprocess = runCommandStream('qwen', ['-y'], {
       cwd,
-      input: executionPrompt
+      input: executionPrompt,
     });
 
     const webStream = ReadableStream.from(subprocess.stdout!);
@@ -49,16 +55,15 @@ class QwenAIProvider implements AIProvider {
     const decoder = new TextDecoder();
     let buffer = '';
 
-    // --- Watchdog setup ---
+    // --- Watchdog and Timeout (unchanged) ---
     let lastOutput = Date.now();
     const watchdogInterval = setInterval(() => {
-      if (Date.now() - lastOutput > 60000) { // 60s silence
+      if (Date.now() - lastOutput > 60000) {
         console.warn('⚠️ Qwen has been silent for >60s');
         say({ text: '⚠️ Qwen has been silent for over a minute, might be stuck.', thread_ts: threadTs });
       }
     }, 60000);
 
-    // --- Hard timeout (e.g. 15 minutes) ---
     const timeoutMs = 15 * 60 * 1000;
     const timeout = setTimeout(() => {
       console.error('⏰ Qwen execution timed out, killing process.');
@@ -73,26 +78,40 @@ class QwenAIProvider implements AIProvider {
 
         const chunk = decoder.decode(value, { stream: true });
         buffer += chunk;
-        lastOutput = Date.now(); // reset watchdog
-
-        // Also log to console for SSH/pm2 logs
-        console.log('[Qwen]', chunk);
+        lastOutput = Date.now();
 
         const lines = buffer.split('\n');
         if (lines.length > 1) {
-          const linesToSend = lines.slice(0, -1).join('\n');
-          if (linesToSend.trim()) {
-            say({ text: `➡️ ${linesToSend}`, thread_ts: threadTs });
-          }
+          const linesToProcess = lines.slice(0, -1);
           buffer = lines[lines.length - 1];
+
+          for (const line of linesToProcess) {
+            // --- NEW FILTERING LOGIC ---
+            if (line.startsWith('[REASONING]')) {
+              // This is an explanation. Clean it up and send it to Slack.
+              const reasoningText = line.substring('[REASONING]'.length).trim();
+              if (reasoningText) {
+                say({ text: `➡️ ${reasoningText}`, thread_ts: threadTs });
+              }
+            } else {
+              // This is internal command output. Log it for debugging but don't send to Slack.
+              console.log('[Qwen Execution]:', line);
+            }
+          }
         }
       }
 
-      if (buffer.trim()) {
-        say({ text: `➡️ ${buffer}`, thread_ts: threadTs });
+      // Process any final text left in the buffer
+      if (buffer.trim().startsWith('[REASONING]')) {
+        const reasoningText = buffer.substring('[REASONING]'.length).trim();
+        if (reasoningText) {
+          say({ text: `➡️ ${reasoningText}`, thread_ts: threadTs });
+        }
+      } else {
+        console.log('[Qwen Execution]:', buffer);
       }
 
-      await subprocess; // wait for exit
+      await subprocess; // Wait for the main Qwen process to exit
     } finally {
       clearInterval(watchdogInterval);
       clearTimeout(timeout);

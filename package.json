@@ -11,11 +11,9 @@
   "dependencies": {
     "@slack/bolt": "^3.13.0",
     "dotenv": "^16.3.1",
-    "execa": "^9.6.0",
-    "marked": "^16.2.0"
+    "execa": "^9.6.0"
   },
   "devDependencies": {
-    "@types/marked": "^5.0.2",
     "@types/node": "^20.8.9",
     "ts-node": "^10.9.1",
     "typescript": "^5.2.2"
