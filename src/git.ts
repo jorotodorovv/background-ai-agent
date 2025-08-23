@@ -28,6 +28,11 @@ export class Git {
     await runCommand('git', ['push', 'origin', branchName], { cwd });
   }
 
+  async diff(cwd: string): Promise<string> {
+    const { stdout } = await runCommand('git', ['diff', '--staged'], { cwd });
+    return stdout.trim();
+  }
+
   async createPullRequest(
     title: string,
     body: string,
