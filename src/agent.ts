@@ -55,11 +55,24 @@ export async function runAgentTask(
     
     await runCommand(`git checkout -b ${branchName}`, { cwd: tempDir });
 
-    // --- THIS IS THE KEY CHANGE ---
-    // We now use the simple, non-interactive command with the -p and -y flags.
+    // --- NEW TWO-STEP PROCESS ---
+
+    // 1. Generate the plan
+    console.log('\n--- Generating implementation plan from Qwen AI ---');
+    await say({ text: '🤔 Generating an implementation plan...', thread_ts: threadTs });
+    const planningPrompt = `Based on the user request, create a detailed implementation plan. Do not execute any commands or modify any files; only output the plan. The user\'s request is: "${prompt}"`;
+    const { stdout: plan } = await runCommand(`qwen -p "${planningPrompt}"`, { cwd: tempDir });
+    
+    await say({
+      text: `Here\'s the plan:\n\`\`\`\n${plan}\n\`\`\`\nI will now proceed with the implementation.`,
+      thread_ts: threadTs,
+    });
+
+    // 2. Execute the plan
     console.log('\n--- Running Qwen AI Agent (Non-Interactive) ---');
-    await say({ text: '⏳ Running the AI model... this is the longest step and may take a few minutes.', thread_ts: threadTs });
-    await runCommand(`qwen -p "${prompt}" -y`, { cwd: tempDir });
+    await say({ text: '⏳ Implementing the plan... this is the longest step and may take a few minutes.', thread_ts: threadTs });
+    const executionPrompt = `Please execute the following plan:\n\n${plan}`;
+    await runCommand(`qwen -p "${executionPrompt}" -y`, { cwd: tempDir });
     console.log('--- Qwen AI Agent Finished ---\n');
     await say({ text: '📝 AI has finished. Committing changes and pushing to a new branch...', thread_ts: threadTs });
     // -----------------------------
