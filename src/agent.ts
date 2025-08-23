@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs/promises';
 import { SayFn } from '@slack/bolt';
-import { aiProvider } from './ai-adapter.js';
+import { ai } from './ai-adapter.js';
 import { git } from './git.js';
 
 export async function runAgentTask(
@@ -28,7 +28,7 @@ export async function runAgentTask(
     await git.branch(branchName, tempDir);
 
     await say({ text: '🤔 Generating an implementation plan...', thread_ts: threadTs });
-    const plan = await aiProvider.generatePlan(prompt, tempDir);
+    const plan = await ai.generatePlan(prompt, tempDir);
     
     await say({
       text: `Here\'s the plan:\n\`\`\`\n${plan}\n\`\`\`\nI will now proceed with the implementation.`,
@@ -36,7 +36,7 @@ export async function runAgentTask(
     });
 
     await say({ text: '🏗️ Implementing the plan... this is the longest step and may take a few minutes.', thread_ts: threadTs });
-    await aiProvider.executePlan(plan, tempDir);
+    await ai.executePlan(plan, tempDir);
     await say({ text: '📝 AI has finished. Committing changes and pushing to a new branch...', thread_ts: threadTs });
 
     await git.add(tempDir);

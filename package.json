@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@slack/bolt": "^3.13.0",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "execa": "^9.6.0"
   },
   "devDependencies": {
     "@types/node": "^20.8.9",

@@ -1,7 +1,7 @@
 import * as dotenv from 'dotenv';
 dotenv.config(); // Load environment variables from .env file
 
-import { App, SayFn } from '@slack/bolt';
+import { App } from '@slack/bolt';
 import { runAgentTask } from './agent.js'; // Import the core agent logic
 
 // --- Agent State ---
