@@ -1,0 +1,45 @@
+name: Deploy AI Agent to VPS
+
+# This workflow runs on every push to the 'main' branch
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: A pre-built action to securely SSH into the server
+      - name: SSH and Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          # Use the secrets we configured in GitHub
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          
+          # The script to execute on the VPS
+          script: |
+            # Use 'set -e' to exit immediately if any command fails
+            set -e
+            
+            echo "--- [1/5] Navigating to project directory ---"
+            cd ~/ai-agent
+            
+            echo "--- [2/5] Pulling latest code from main branch ---"
+            git pull origin main
+            
+            echo "--- [3/5] Installing/updating dependencies ---"
+            npm install
+            
+            echo "--- [4/5] Building the TypeScript project ---"
+            npm run build
+            
+            echo "--- [5/5] Reloading the application with PM2 ---"
+            # 'reload' provides a zero-downtime restart
+            pm2 reload ecosystem.config.js --update-env
+            
+            echo "--- ✅ Deployment successful! ---"
