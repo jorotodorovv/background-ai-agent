@@ -133,7 +133,7 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
     let buffer = '';
 
     // Create a message batcher for more efficient Slack messaging
-    const batcher = new MessageBatcher(ai, say, cwd, threadTs, {
+    const batcher = new MessageBatcher(this, say, cwd, threadTs, {
       batchTimeMs: 2000, // Check for messages every 2 seconds
       maxBatchSize: 5    // Send up to 5 messages in a batch
     });
