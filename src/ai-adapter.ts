@@ -60,7 +60,7 @@ ${plan}
     });
 
     // Common stream processing logic
-    await this.processStream(subprocess, say, threadTs, command);
+    await this.processStream(subprocess, say, cwd, threadTs, command);
   }
 
   // Common implementation for generating branch names
@@ -126,26 +126,17 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
   }
 
   // Common stream processing logic
-  protected async processStream(subprocess: any, say: SayFn, threadTs: string, providerName: string): Promise<void> {
+  protected async processStream(subprocess: any, say: SayFn, cwd: string, threadTs: string, providerName: string): Promise<void> {
     const webStream = ReadableStream.from(subprocess.stdout!);
     const reader = webStream.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
 
     // Create a message batcher for more efficient Slack messaging
-    const batcher = new MessageBatcher(say, threadTs, {
+    const batcher = new MessageBatcher(ai, say, cwd, threadTs, {
       batchTimeMs: 2000, // Check for messages every 2 seconds
       maxBatchSize: 5    // Send up to 5 messages in a batch
     });
-
-    // --- Watchdog and Timeout (unchanged) ---
-    let lastOutput = Date.now();
-    const watchdogInterval = setInterval(() => {
-      if (Date.now() - lastOutput > 60000) {
-        console.warn(`⚠️ ${providerName} has been silent for >60s`);
-        say({ text: `⚠️ ${providerName} has been silent for over a minute, might be stuck.`, thread_ts: threadTs });
-      }
-    }, 60000);
 
     const timeoutMs = 60 * 60 * 1000;
     const timeout = setTimeout(() => {
@@ -161,7 +152,6 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
 
         const chunk = decoder.decode(value as BufferSource, { stream: true });
         buffer += chunk;
-        lastOutput = Date.now();
 
         const lines = buffer.split('\n');
         if (lines.length > 1) {
@@ -169,22 +159,18 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
           buffer = lines[lines.length - 1];
 
           for (const line of linesToProcess) {
-            // --- NEW FILTERING LOGIC ---
             if (line.startsWith('[REASONING]')) {
-              // This is an explanation. Clean it up and add it to the batcher.
               const reasoningText = line.substring('[REASONING]'.length).trim();
               if (reasoningText) {
                 batcher.addMessage(`➡️ ${reasoningText}`);
               }
             } else {
-              // This is internal command output. Log it for debugging but don't send to Slack.
               console.log(`[${providerName} Execution]:`, line);
             }
           }
         }
       }
 
-      // Process any final text left in the buffer
       if (buffer.trim().startsWith('[REASONING]')) {
         const reasoningText = buffer.substring('[REASONING]'.length).trim();
         if (reasoningText) {
@@ -205,7 +191,6 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
     } finally {
       // Clean up the batcher and send any remaining messages
       batcher.destroy();
-      clearInterval(watchdogInterval);
       clearTimeout(timeout);
     }
   }

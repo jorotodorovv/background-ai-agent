@@ -1,5 +1,5 @@
 import { SayFn } from '@slack/bolt';
-import { createAIProvider, AIProviderConfig } from './ai-adapter.js';
+import { AIProvider } from './ai-adapter.js';
 
 interface PendingMessage {
   text: string;
@@ -11,10 +11,11 @@ export class MessageBatcher {
   private batchInterval: NodeJS.Timeout | null = null;
   private readonly batchTimeMs: number;
   private readonly maxBatchSize: number;
-  private readonly ai: any; // AI provider for summarization
 
   constructor(
+    private readonly ai: AIProvider,
     private readonly say: SayFn,
+    private readonly cwd: string,
     private readonly threadTs: string,
     options?: {
       batchTimeMs?: number; // Time interval to check for messages (default: 2000ms)
@@ -23,15 +24,7 @@ export class MessageBatcher {
   ) {
     this.batchTimeMs = options?.batchTimeMs ?? 2000;
     this.maxBatchSize = options?.maxBatchSize ?? 5;
-    
-    // Create AI provider for summarization
-    const aiProviderConfig: AIProviderConfig = {
-      provider: (process.env.AI_PROVIDER as 'qwen' | 'openai') || 'qwen',
-      model: process.env.AI_MODEL,
-      apiKey: process.env.OPENAI_API_KEY,
-    };
-    
-    this.ai = createAIProvider(aiProviderConfig);
+
     this.startBatching();
   }
 
@@ -53,7 +46,7 @@ export class MessageBatcher {
     if (this.pendingMessages.length >= this.maxBatchSize) {
       // Get messages for this batch (up to maxBatchSize)
       const messagesToSend = this.pendingMessages.splice(0, this.maxBatchSize);
-      
+
       // Use AI to summarize the messages asynchronously
       this.summarizeMessagesAndSend(messagesToSend);
     }
@@ -64,7 +57,7 @@ export class MessageBatcher {
     try {
       // Use AI to summarize the messages
       const summarizedMessage = await this.summarizeMessages(messages);
-      
+
       // Send the summarized message
       await this.say({
         text: summarizedMessage,
@@ -90,7 +83,6 @@ export class MessageBatcher {
     // Create a prompt for the AI to summarize the messages
     const messageTexts = messages.map(msg => msg.text).join('\n\n');
     const summaryPrompt = `Please summarize the following AI agent progress updates into a single coherent message. 
-Extract and include any important code snippets that were generated, formatted in markdown code blocks.
 Focus on the key actions taken and results achieved.
 Do not include any prefix or suffix, just return the summary message.
 
@@ -99,11 +91,11 @@ ${messageTexts}`;
 
     try {
       // Use the AI to generate a summary
-      const summary = await this.ai.generatePlan(summaryPrompt, process.cwd());
+      const summary = await this.ai.generatePlan(summaryPrompt, this.cwd);
       return summary.trim() || `🔄 AI Agent Update (${messages.length} items)`;
     } catch (error) {
       console.error('Failed to summarize messages with AI:', error);
-      
+
       // Fallback to simple formatting if AI summarization fails
       const messageCount = messages.length;
       const items = messages.map((msg, index) => `${index + 1}. ${msg.text}`).join('\n');
@@ -120,7 +112,7 @@ ${messageTexts}`;
     // Create a summarized message for multiple items
     const messageCount = messages.length;
     const items = messages.map((msg, index) => `${index + 1}. ${msg.text}`).join('\n');
-    
+
     return `🔄 AI Agent Update (${messageCount} items):\n${items}`;
   }
 
@@ -142,7 +134,7 @@ ${messageTexts}`;
       // Process in batches of maxBatchSize
       const messagesToSend = this.pendingMessages.splice(0, this.maxBatchSize);
       const formattedMessage = this.formatBatchMessage(messagesToSend);
-      
+
       // Send the message asynchronously
       this.say({
         text: formattedMessage,
