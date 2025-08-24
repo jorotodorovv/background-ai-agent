@@ -122,12 +122,20 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
     }
   }
 
-  // Common stream processing logic
   protected async processStream(subprocess: any, say: SayFn, cwd: string, threadTs: string, providerName: string): Promise<void> {
     const webStream = ReadableStream.from(subprocess.stdout!);
     const reader = webStream.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+
+    // --- Watchdog and Timeout (unchanged) ---
+    let lastOutput = Date.now();
+    const watchdogInterval = setInterval(() => {
+      if (Date.now() - lastOutput > 60000) {
+        console.warn(`⚠️ ${providerName} has been silent for >60s`);
+        say({ text: `⚠️ ${providerName} has been silent for over a minute, might be stuck.`, thread_ts: threadTs });
+      }
+    }, 60000);
 
     const timeoutMs = 60 * 60 * 1000;
     const timeout = setTimeout(() => {
@@ -143,18 +151,34 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
 
         const chunk = decoder.decode(value as BufferSource, { stream: true });
         buffer += chunk;
+        lastOutput = Date.now();
+        console.log(`[${providerName} Raw Chunk]:`, chunk); // Log the raw chunk for debugging
 
+        // --- CORRECTED LINE-BUFFERING LOGIC ---
+        const lines = buffer.split('\n');
+        if (lines.length > 1) {
+          // We have at least one complete line
+          const linesToSend = lines.slice(0, -1).join('\n');
+          if (linesToSend.trim()) {
+            // Send the complete line(s) to Slack
+            await say({ text: `➡️ ${linesToSend}`, thread_ts: threadTs });
+          }
+          // The last part of the split is the new, incomplete buffer
+          buffer = lines[lines.length - 1];
+        }
+        // --- END OF CORRECTION ---
+      }
+
+      // After the loop, send any final text left in the buffer
+      if (buffer.trim()) {
         await say({ text: `➡️ ${buffer}`, thread_ts: threadTs });
-        console.log(`[${providerName} Execution]:`, buffer);
       }
 
       try {
         await subprocess;
       } catch (error: any) {
-        // If the AI process fails, we catch the error here.
         console.error(`The ${providerName} process exited with an error...`, error);
         await say({ text: `⚠️ The AI process finished with an error...`, thread_ts: threadTs });
-        // We DO NOT re-throw the error. The function will now exit gracefully.
       }
     } finally {
       clearTimeout(timeout);
