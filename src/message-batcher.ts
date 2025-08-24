@@ -1,5 +1,5 @@
 import { SayFn } from '@slack/bolt';
-import { AIProvider } from './ai-adapter.js';
+import { AIProvider } from './ai-adapter';
 
 interface PendingMessage {
   text: string;
@@ -48,7 +48,10 @@ export class MessageBatcher {
       const messagesToSend = this.pendingMessages.splice(0, this.maxBatchSize);
 
       // Use AI to summarize the messages asynchronously
-      this.summarizeMessagesAndSend(messagesToSend);
+      // We don't await this since we want to continue processing
+      this.summarizeMessagesAndSend(messagesToSend).catch(error => {
+        console.error('Error in summarizeMessagesAndSend:', error);
+      });
     }
   }
 
@@ -119,29 +122,38 @@ ${messageTexts}`;
   // Start the batching interval
   private startBatching(): void {
     this.batchInterval = setInterval(() => {
-      this.processBatch();
+      this.processBatch().catch(error => {
+        console.error('Error in batch processing:', error);
+      });
     }, this.batchTimeMs);
   }
 
   // Stop batching and clear any pending messages
-  public destroy(): void {
+  public async destroy(): Promise<void> {
     if (this.batchInterval) {
       clearInterval(this.batchInterval);
       this.batchInterval = null;
     }
+    
     // Send any remaining messages
+    const sendPromises: Promise<any>[] = [];
     while (this.pendingMessages.length > 0) {
       // Process in batches of maxBatchSize
       const messagesToSend = this.pendingMessages.splice(0, this.maxBatchSize);
       const formattedMessage = this.formatBatchMessage(messagesToSend);
 
-      // Send the message asynchronously
-      this.say({
-        text: formattedMessage,
-        thread_ts: this.threadTs
-      }).catch(error => {
-        console.error('Error sending final messages:', error);
-      });
+      // Collect promises for all send operations
+      sendPromises.push(
+        this.say({
+          text: formattedMessage,
+          thread_ts: this.threadTs
+        }).catch(error => {
+          console.error('Error sending final messages:', error);
+        })
+      );
     }
+    
+    // Wait for all messages to be sent
+    await Promise.all(sendPromises);
   }
 }

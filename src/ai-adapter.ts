@@ -1,7 +1,7 @@
 import { SayFn } from '@slack/bolt';
-import { runCommand, runCommandStream } from './command.js';
+import { runCommand, runCommandStream } from './command';
 import { ReadableStream } from 'node:stream/web';
-import { MessageBatcher } from './message-batcher.js';
+import { MessageBatcher } from './message-batcher';
 
 // Define a structure for our expected metadata
 export interface GitMetadata {
@@ -190,7 +190,7 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
       }
     } finally {
       // Clean up the batcher and send any remaining messages
-      batcher.destroy();
+      await batcher.destroy();
       clearTimeout(timeout);
     }
   }

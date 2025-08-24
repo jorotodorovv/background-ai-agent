@@ -2,8 +2,8 @@ import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs/promises';
 import { SayFn } from '@slack/bolt';
-import { createAIProvider, AIProviderConfig } from './ai-adapter.js';
-import { git } from './git.js';
+import { createAIProvider, AIProviderConfig } from './ai-adapter';
+import { git } from './git';
 
 export async function runAgentTask(
   prompt: string,

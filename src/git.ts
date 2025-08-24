@@ -1,5 +1,5 @@
 // src/git.ts
-import { runCommand } from './command.js';
+import { runCommand } from './command';
 
 export class Git {
   async clone(repoUrl: string, cwd: string): Promise<void> {
