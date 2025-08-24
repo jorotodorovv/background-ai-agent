@@ -1,6 +1,7 @@
 import { SayFn } from '@slack/bolt';
 import { runCommand, runCommandStream } from './command';
 import { ReadableStream } from 'node:stream/web';
+import { clearTimeout } from 'node:timers';
 
 // Define a structure for our expected metadata
 export interface GitMetadata {
@@ -181,6 +182,7 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
         await say({ text: `⚠️ The AI process finished with an error...`, thread_ts: threadTs });
       }
     } finally {
+      clearInterval(watchdogInterval);
       clearTimeout(timeout);
     }
   }
