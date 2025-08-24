@@ -1,7 +1,6 @@
 import { SayFn } from '@slack/bolt';
 import { runCommand, runCommandStream } from './command';
 import { ReadableStream } from 'node:stream/web';
-import { MessageBatcher } from './message-batcher';
 
 // Define a structure for our expected metadata
 export interface GitMetadata {
@@ -132,12 +131,6 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
     const decoder = new TextDecoder();
     let buffer = '';
 
-    // Create a message batcher for more efficient Slack messaging
-    const batcher = new MessageBatcher(this, say, cwd, threadTs, {
-      batchTimeMs: 2000, // Check for messages every 2 seconds
-      maxBatchSize: 5    // Send up to 5 messages in a batch
-    });
-
     const timeoutMs = 60 * 60 * 1000;
     const timeout = setTimeout(() => {
       console.error(`⏰ ${providerName} execution timed out, killing process.`);
@@ -162,7 +155,8 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
             if (line.startsWith('[REASONING]')) {
               const reasoningText = line.substring('[REASONING]'.length).trim();
               if (reasoningText) {
-                batcher.addMessage(`➡️ ${reasoningText}`);
+                // Send message directly to Slack without batching
+                await say({ text: `➡️ ${reasoningText}`, thread_ts: threadTs });
               }
             } else {
               console.log(`[${providerName} Execution]:`, line);
@@ -174,7 +168,8 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
       if (buffer.trim().startsWith('[REASONING]')) {
         const reasoningText = buffer.substring('[REASONING]'.length).trim();
         if (reasoningText) {
-          batcher.addMessage(`➡️ ${reasoningText}`);
+          // Send message directly to Slack without batching
+          await say({ text: `➡️ ${reasoningText}`, thread_ts: threadTs });
         }
       } else {
         console.log(`[${providerName} Execution]:`, buffer);
@@ -183,14 +178,12 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
       try {
         await subprocess;
       } catch (error: any) {
-        // If the qwen process fails, we catch the error here.
+        // If the AI process fails, we catch the error here.
         console.error(`The ${providerName} process exited with an error...`, error);
-        batcher.addMessage(`⚠️ The AI process finished with an error...`);
+        await say({ text: `⚠️ The AI process finished with an error...`, thread_ts: threadTs });
         // We DO NOT re-throw the error. The function will now exit gracefully.
       }
     } finally {
-      // Clean up the batcher and send any remaining messages
-      await batcher.destroy();
       clearTimeout(timeout);
     }
   }
