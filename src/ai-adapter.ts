@@ -41,8 +41,6 @@ export abstract class AIProvider {
     // Instruct the AI to use a special prefix for all explanatory text.
     const executionPrompt = `
 Please execute the following plan. You will run the necessary shell commands yourself.
-When you are providing explanations, comments, or reasoning, you MUST prefix each line with the special marker "[REASONING]".
-Any line that does not start with this marker will be considered internal command output and will be hidden from the user.
 
 The plan is:
 ---
@@ -146,32 +144,7 @@ Provide the output in a single, raw JSON object. Do not include any other text, 
         const chunk = decoder.decode(value as BufferSource, { stream: true });
         buffer += chunk;
 
-        const lines = buffer.split('\n');
-        if (lines.length > 1) {
-          const linesToProcess = lines.slice(0, -1);
-          buffer = lines[lines.length - 1];
-
-          for (const line of linesToProcess) {
-            if (line.startsWith('[REASONING]')) {
-              const reasoningText = line.substring('[REASONING]'.length).trim();
-              if (reasoningText) {
-                // Send message directly to Slack without batching
-                await say({ text: `➡️ ${reasoningText}`, thread_ts: threadTs });
-              }
-            } else {
-              console.log(`[${providerName} Execution]:`, line);
-            }
-          }
-        }
-      }
-
-      if (buffer.trim().startsWith('[REASONING]')) {
-        const reasoningText = buffer.substring('[REASONING]'.length).trim();
-        if (reasoningText) {
-          // Send message directly to Slack without batching
-          await say({ text: `➡️ ${reasoningText}`, thread_ts: threadTs });
-        }
-      } else {
+        await say({ text: `➡️ ${buffer}`, thread_ts: threadTs });
         console.log(`[${providerName} Execution]:`, buffer);
       }
 
